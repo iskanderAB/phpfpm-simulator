@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PHP-FPM pool simulator</title>
+<style>
+:root{--bg:#ffffff;--s1:#f4f5f7;--tx:#172b4d;--tx2:#5e6c84;--tx3:#97a0af;--bd:#dfe1e6;--bd2:#b3bac5;
+--acc-bg:#e9f2ff;--acc-bd:#579dff;--acc-tx:#0c66e4;--ok-bg:#dcfff1;--ok-bd:#4bce97;--ok-tx:#216e4e;
+--wa-bg:#fff7d6;--wa-bd:#e2b203;--wa-tx:#7f5f01;--rs-bg:#f3f0ff;--rs-bd:#9f8fef;--rs-tx:#5e4db2;--er:#c9372c}
+@media (prefers-color-scheme:dark){:root{--bg:#1d2125;--s1:#282e33;--tx:#dee4ea;--tx2:#9fadbc;--tx3:#738496;--bd:#38414a;--bd2:#596773;
+--acc-bg:#09326c;--acc-bd:#579dff;--acc-tx:#cce0ff;--ok-bg:#164b35;--ok-bd:#4bce97;--ok-tx:#baf3db;
+--wa-bg:#533f04;--wa-bd:#e2b203;--wa-tx:#f8e6a0;--rs-bg:#352c63;--rs-bd:#9f8fef;--rs-tx:#dfd8fd;--er:#fd9891}}
+*{box-sizing:border-box}
+body{margin:0;padding:24px;background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:14px}
+.wrap{max-width:900px;margin:0 auto}
+h1{font-size:22px;font-weight:500;margin:0 0 4px}
+.sub{color:var(--tx2);margin:0 0 18px;line-height:1.6}
+.modes{display:flex;gap:8px;margin-bottom:12px}
+button{padding:8px 12px;border:1px solid var(--bd2);background:var(--s1);color:var(--tx);border-radius:8px;cursor:pointer;font-size:14px}
+.modes button{flex:1}
+.modes button.on{background:var(--acc-bg);border-color:var(--acc-bd);color:var(--acc-tx);font-weight:500}
+.row{display:flex;align-items:center;gap:12px;margin:6px 0;color:var(--tx2);transition:opacity .2s}
+.row label{min-width:200px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.row input{flex:1}
+.row .val{min-width:56px;text-align:right;color:var(--tx);font-weight:500}
+.row.dis{opacity:.35}
+#warn{font-size:13px;color:var(--er);min-height:18px;margin:4px 0}
+.bar{display:flex;gap:8px;margin:8px 0;flex-wrap:wrap}
+#grid{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 8px}
+.w{width:56px;height:46px;border-radius:6px;border:1px solid var(--bd);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:12px;line-height:1.25;transition:background .25s}
+.w b{font-weight:500;font-size:13px}
+.w.busy{background:var(--wa-bg);border-color:var(--wa-bd);color:var(--wa-tx)}
+.w.idle{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok-tx)}
+.w.flash{background:var(--rs-bg);border-color:var(--rs-bd);color:var(--rs-tx)}
+.w.off{border:1px dashed var(--bd2);color:var(--tx3)}
+.leg{display:flex;gap:14px;font-size:12px;color:var(--tx2);flex-wrap:wrap}
+.leg span{display:flex;align-items:center;gap:6px}
+.leg i{display:inline-block;width:12px;height:12px;border-radius:3px}
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin:14px 0}
+.stat{background:var(--s1);border-radius:8px;padding:8px 10px}
+.stat div:first-child{font-size:12px;color:var(--tx2)}
+.stat div:last-child{font-size:18px;font-weight:500}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+pre,#log{margin:0;padding:10px 12px;background:var(--s1);border-radius:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.6;min-height:160px;white-space:pre-wrap}
+#log div{color:var(--tx2)}
+.tips{margin-top:18px;color:var(--tx2);line-height:1.7}
+.tips h2{font-size:16px;font-weight:500;color:var(--tx);margin:0 0 6px}
+@media (max-width:640px){.stats{grid-template-columns:repeat(3,1fr)}.two{grid-template-columns:1fr}.row label{min-width:140px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>PHP-FPM pool simulator</h1>
+<p class="sub">One tick = one second. Each box is a worker: the top number is how many requests it has done, the bottom number is its RAM. Change the settings and watch how PHP-FPM reacts.</p>
+<div class="modes">
+<button id="m-static" onclick="setMode('static')">static</button>
+<button id="m-dynamic" class="on" onclick="setMode('dynamic')">dynamic</button>
+<button id="m-ondemand" onclick="setMode('ondemand')">ondemand</button>
+</div>
+<div class="row"><label>pm.max_children</label><input type="range" id="max" min="4" max="30" value="16"><span class="val" id="max-v"></span></div>
+<div class="row" id="r-minsp"><label>pm.min_spare_servers</label><input type="range" id="minsp" min="1" max="12" value="2"><span class="val" id="minsp-v"></span></div>
+<div class="row" id="r-maxsp"><label>pm.max_spare_servers</label><input type="range" id="maxsp" min="1" max="20" value="5"><span class="val" id="maxsp-v"></span></div>
+<div class="row"><label>pm.max_requests</label><input type="range" id="maxreq" min="0" max="100" step="5" value="30"><span class="val" id="maxreq-v"></span></div>
+<div class="row"><label>Memory leak per request</label><input type="range" id="leak" min="0" max="20" value="5"><span class="val" id="leak-v"></span></div>
+<div class="row"><label>Visitors at same time</label><input type="range" id="load" min="0" max="40" value="6"><span class="val" id="load-v"></span></div>
+<div id="warn"></div>
+<div class="bar">
+<button id="play" onclick="togglePlay()">Pause</button>
+<button onclick="spike()">Traffic spike (10s)</button>
+<button onclick="resetPool()">Restart PHP-FPM</button>
+</div>
+<div id="grid"></div>
+<div class="leg"><span><i style="background:var(--wa-bg);border:1px solid var(--wa-bd)"></i>Busy</span><span><i style="background:var(--ok-bg);border:1px solid var(--ok-bd)"></i>Idle (spare)</span><span><i style="background:var(--rs-bg);border:1px solid var(--rs-bd)"></i>Just restarted (max_requests)</span><span><i style="border:1px dashed var(--bd2)"></i>Free slot</span></div>
+<div class="stats">
+<div class="stat"><div>Time</div><div id="s-t"></div></div>
+<div class="stat"><div>Running</div><div id="s-run"></div></div>
+<div class="stat"><div>Idle</div><div id="s-idle"></div></div>
+<div class="stat"><div>Queue</div><div id="s-q"></div></div>
+<div class="stat"><div>Total RAM</div><div id="s-ram"></div></div>
+<div class="stat"><div>Restarts</div><div id="s-rs"></div></div>
+</div>
+<div class="two"><pre id="cfg"></pre><div id="log"></div></div>
+<div class="tips">
+<h2>Experiments to try</h2>
+1. Set visitors to 15, then drop to 2: PHP-FPM kills one idle worker per second until idle is at or below max_spare_servers.<br>
+2. Set min_spare_servers to 6 and visitors to 0: PHP-FPM keeps 6 workers ready.<br>
+3. Set the leak to 2 MB and max_requests to off: RAM keeps growing. Then set max_requests to 20: workers restart and RAM goes down.<br>
+4. Press "Traffic spike": when all workers are busy, the queue grows and the max_children warning appears.<br>
+5. Set min_spare_servers above max_spare_servers: you see the error that real PHP-FPM gives.<br><br>
+<em>Simplified model: max_requests is small here so restarts are easy to see (use 500 to 1000 in real life). Real PHP-FPM starts workers in a growing burst (1, 2, 4… up to 32 per second), and real workers handle many requests per second.</em>
+</div>
+</div>
+<script>
+var BASE=40,st={mode:'dynamic',w:[],t:0,rs:0,q:0,log:[],run:true,spike:0,nid:1};
+function g(i){return document.getElementById(i)}
+function v(i){return +g(i).value}
+function mk(){return {id:st.nid++,reqs:0,mem:BASE,busy:false,idle:0,flash:0}}
+function lg(m){st.log.unshift('t='+st.t+'s  '+m);st.log=st.log.slice(0,9)}
+function startN(){var mn=v('minsp'),mx=Math.max(v('maxsp'),mn);return Math.min(v('max'),Math.floor(mn+(mx-mn)/2))}
+function resetPool(){st.w=[];st.t=0;st.rs=0;st.q=0;st.log=[];var n=st.mode==='static'?v('max'):st.mode==='dynamic'?startN():0;for(var i=0;i<n;i++)st.w.push(mk());lg('PHP-FPM started with '+n+' workers');render()}
+function setMode(m){st.mode=m;['static','dynamic','ondemand'].forEach(function(x){g('m-'+x).classList.toggle('on',x===m)});resetPool()}
+function togglePlay(){st.run=!st.run;g('play').textContent=st.run?'Pause':'Play'}
+function spike(){st.spike=10;lg('Traffic spike started')}
+function tick(){
+if(!st.run)return;st.t++;
+var M=v('max'),mn=v('minsp'),mx=Math.max(v('maxsp'),mn),R=v('maxreq'),leak=v('leak')/10,L=v('load');
+if(st.spike>0){L=Math.max(L,Math.round(M*1.4));st.spike--;if(st.spike===0)lg('Traffic spike ended')}
+while(st.w.length>M)st.w.pop();
+if(st.mode==='static')while(st.w.length<M)st.w.push(mk());
+if(st.mode==='ondemand'&&L>st.w.length){var k=Math.min(L-st.w.length,M-st.w.length);for(var i=0;i<k;i++)st.w.push(mk());if(k>0)lg('ondemand: started '+k+' worker(s) for new requests')}
+var n=st.w.length,b=Math.min(L,n);st.q=L-b;
+st.w.forEach(function(w,i){w.busy=i<b;if(w.flash>0)w.flash--;
+if(w.busy){w.idle=0;w.reqs++;w.mem+=leak;
+if(R>0&&w.reqs>=R){var freed=Math.round(w.mem-BASE);lg('Worker #'+w.id+' did '+R+' requests, restarted (freed '+freed+' MB)');var nw=mk();nw.flash=2;nw.busy=true;st.w[i]=nw;st.rs++}}
+else w.idle++});
+var idle=n-b;
+if(st.mode==='dynamic'){
+if(idle<mn&&n<M){var k2=Math.min(mn-idle,M-n);for(var j=0;j<k2;j++)st.w.push(mk());lg('idle '+idle+' < min_spare '+mn+': started '+k2)}
+else if(idle>mx){for(var x=st.w.length-1;x>=0;x--){if(!st.w[x].busy){lg('idle '+idle+' > max_spare '+mx+': killed #'+st.w[x].id);st.w.splice(x,1);break}}}}
+if(st.mode==='ondemand'){for(var y=st.w.length-1;y>=0;y--){if(!st.w[y].busy&&st.w[y].idle>=10){lg('Worker #'+st.w[y].id+' idle 10s: killed');st.w.splice(y,1)}}}
+if(st.q>0&&st.t%3===0)lg('WARNING: server reached pm.max_children ('+M+')');
+render()}
+function render(){
+var M=v('max'),mn=v('minsp'),mx=v('maxsp'),R=v('maxreq');
+['max','minsp','maxsp','load'].forEach(function(i){g(i+'-v').textContent=g(i).value});
+g('maxreq-v').textContent=R===0?'off':R;g('leak-v').textContent=(v('leak')/10).toFixed(1)+' MB';
+var d=st.mode==='dynamic';g('r-minsp').classList.toggle('dis',!d);g('r-maxsp').classList.toggle('dis',!d);
+var wn='';if(d&&mn>mx)wn='Error: min_spare_servers ('+mn+') must be <= max_spare_servers ('+mx+'). Real PHP-FPM would not start.';else if(d&&mx>M)wn='Error: max_spare_servers must be <= max_children.';
+g('warn').textContent=wn;
+var h='',idle=0,ram=0;
+for(var i=0;i<M;i++){var w=st.w[i];if(w){if(!w.busy)idle++;ram+=w.mem;var c=w.flash>0?'flash':(w.busy?'busy':'idle');h+='<div class="w '+c+'" title="Worker #'+w.id+'"><b>'+w.reqs+'</b><span>'+Math.round(w.mem)+'MB</span></div>'}else h+='<div class="w off">free</div>'}
+g('grid').innerHTML=h;
+g('s-t').textContent=st.t+'s';g('s-run').textContent=st.w.length;g('s-idle').textContent=idle;g('s-q').textContent=st.q;g('s-ram').textContent=Math.round(ram)+' MB';g('s-rs').textContent=st.rs;
+var c='[www]\npm = '+st.mode+'\npm.max_children = '+M;
+if(d)c+='\npm.start_servers = '+startN()+'\npm.min_spare_servers = '+mn+'\npm.max_spare_servers = '+mx;
+if(st.mode==='ondemand')c+='\npm.process_idle_timeout = 10s';
+c+='\npm.max_requests = '+R;
+g('cfg').textContent=c;
+g('log').innerHTML=st.log.map(function(l){return '<div>'+l+'</div>'}).join('')||'<div>Events appear here</div>';
+}
+['max','minsp','maxsp','maxreq','leak','load'].forEach(function(i){g(i).addEventListener('input',render)});
+resetPool();setInterval(tick,800);
+</script>
+</body>
+</html>
